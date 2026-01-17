@@ -1,0 +1,20 @@
+{
+  "name": "bot",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.3",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.16",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
