@@ -1,3 +1,4 @@
+// Parsed webhook message type
 export interface ParsedWebhookMessage {
   product: string;
   price: number;

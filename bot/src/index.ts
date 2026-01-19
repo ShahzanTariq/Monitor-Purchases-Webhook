@@ -1,5 +1,4 @@
 import { Client, GatewayIntentBits, Message, PartialMessage, Embed } from 'discord.js';
-import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import path from 'path';
 import { isSuccessfulCheckout, parseWebhookMessage, getParseDebugInfo } from './parser';
@@ -8,8 +7,8 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const USER_API_TOKEN = process.env.USER_API_TOKEN;
+const API_URL = process.env.API_URL || 'http://localhost:3001' || 'https://resell-tracker.com/api/v1' || 'http://127.0.0.1:3001';
 
 if (!DISCORD_BOT_TOKEN) {
   console.error('Error: DISCORD_BOT_TOKEN is required in .env file');
@@ -21,13 +20,11 @@ if (!DISCORD_CHANNEL_ID) {
   process.exit(1);
 }
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error('Error: SUPABASE_URL and SUPABASE_ANON_KEY are required in .env file');
+if (!USER_API_TOKEN) {
+  console.error('Error: USER_API_TOKEN is required in .env file');
+  console.error('Create an API token in the Resell Tracker Settings page');
   process.exit(1);
 }
-
-// Initialize Supabase client
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // Initialize Discord client
 const client = new Client({
@@ -38,20 +35,8 @@ const client = new Client({
   ],
 });
 
-async function checkExists(discordMessageIdPattern: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('purchases')
-    .select('id')
-    .like('discord_message_id', discordMessageIdPattern)
-    .limit(1);
-
-  if (error) {
-    console.error('Error checking existence:', error);
-    return false;
-  }
-
-  return data && data.length > 0;
-}
+// Track processed message IDs to avoid duplicates within session
+const processedMessages = new Set<string>();
 
 async function insertPurchase(purchase: {
   product: string;
@@ -70,30 +55,47 @@ async function insertPurchase(purchase: {
   raw_message_text: string;
   discord_message_id: string;
 }): Promise<boolean> {
-  const { error } = await supabase
-    .from('purchases')
-    .insert(purchase);
+  try {
+    const response = await fetch(`${API_URL}/bot/purchases`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Token': USER_API_TOKEN!,
+      },
+      body: JSON.stringify(purchase),
+    });
 
-  if (error) {
-    // Check if it's a unique constraint violation (already exists)
-    if (error.code === '23505') {
-      console.log(`[SKIP] Purchase already exists: ${purchase.discord_message_id}`);
-      return false;
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+
+      // Check if it's a duplicate (409 Conflict)
+      if (response.status === 409) {
+        console.log(`[SKIP] Purchase already exists: ${purchase.discord_message_id}`);
+        return false;
+      }
+
+      // Check for auth errors
+      if (response.status === 401) {
+        console.error('[ERROR] Invalid API token. Please check your USER_API_TOKEN');
+        return false;
+      }
+
+      throw new Error(error.error || `HTTP ${response.status}`);
     }
-    throw error;
-  }
 
-  return true;
+    return true;
+  } catch (error) {
+    console.error('[ERROR] Failed to insert purchase:', error);
+    return false;
+  }
 }
 
 async function processMessage(message: Message | PartialMessage): Promise<void> {
   // Ignore messages from other channels
   if (message.channelId !== DISCORD_CHANNEL_ID) return;
 
-  // Skip if we've already processed this message (check for base ID or any item from it)
-  const exists = await checkExists(`${message.id}%`);
-  if (exists) {
-    console.log(`[SKIP] Already processed message ${message.id}`);
+  // Skip if we've already processed this message in this session
+  if (processedMessages.has(message.id)) {
     return;
   }
 
@@ -146,7 +148,10 @@ async function processMessage(message: Message | PartialMessage): Promise<void> 
     return;
   }
 
-  // Insert each item into database
+  // Mark message as processed
+  processedMessages.add(message.id);
+
+  // Insert each item into database via API
   const purchaseDate = message.createdAt?.toISOString() || new Date().toISOString();
   let savedCount = 0;
 
@@ -191,6 +196,7 @@ async function processMessage(message: Message | PartialMessage): Promise<void> 
 client.once('ready', () => {
   console.log(`Discord bot logged in as ${client.user?.tag}`);
   console.log(`Listening to channel: ${DISCORD_CHANNEL_ID}`);
+  console.log(`API URL: ${API_URL}`);
 });
 
 client.on('messageCreate', (message) => {
