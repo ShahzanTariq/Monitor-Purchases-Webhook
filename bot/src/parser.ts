@@ -1,4 +1,18 @@
-import type { ParsedWebhookMessage } from '../../shared/src/index';
+export interface ParsedWebhookMessage {
+  product: string;
+  price: number;
+  quantity: number;
+  site: string;
+  sku: string | null;
+  mode: string | null;
+  fulfillment_type: string | null;
+  profile: string | null;
+  order_id: string | null;
+  order_email: string | null;
+  order_link: string | null;
+  account: string | null;
+  raw_message_text: string;
+}
 
 /**
  * Parse StellarAIO webhook messages from Discord embeds.
